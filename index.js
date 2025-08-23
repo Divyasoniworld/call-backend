@@ -1,7 +1,7 @@
-// server.js
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const cors = require("cors")
 
 const app = express();
 app.use(cors());
@@ -22,11 +22,13 @@ io.on("connection", (socket) => {
 
   // User registers with a chosen ID (username, number, etc.)
   socket.on("register", (userId) => {
-    // Check if userId is already taken
-    if ([...users.keys()].includes(userId)) {
-        // You might want to emit an error back to the client
-        console.log(`User ID ${userId} is already taken.`);
-        return;
+    if ([...users.values()].includes(socket.id)) {
+      // If this socket is already registered with a different userId, remove old entry
+      for (let [key, value] of users.entries()) {
+        if (value === socket.id) {
+          users.delete(key);
+        }
+      }
     }
     users.set(userId, socket.id);
     socket.userId = userId; // keep for cleanup
@@ -42,8 +44,10 @@ io.on("connection", (socket) => {
       console.log(`User unregistered: ${socket.userId}`);
       console.log("Current users:", Object.fromEntries(users));
     }
-    // Inform the other user in a call that the call has ended
-    socket.broadcast.emit("callEnded");
+    // UPDATED: Removed this line. Broadcasting `callEnded` on disconnect
+    // can terminate unrelated active calls. It's more robust for the
+    // client's `oniceconnectionstatechange` to handle unexpected drops.
+    // socket.broadcast.emit("callEnded"); // <-- REMOVED
   });
 
   // Caller -> send offer to recipient
@@ -51,18 +55,17 @@ io.on("connection", (socket) => {
     const targetSocketId = users.get(to);
     if (targetSocketId) {
       console.log(`Forwarding call from ${socket.userId} to ${to}`);
-      // 1. Tell recipient about the incoming call
       io.to(targetSocketId).emit("incomingCall", {
         from: socket.userId,
         offer,
       });
-      // **FIX**: 2. Tell the caller that the call is ringing the intended recipient
-      io.to(socket.id).emit("callRinging", { to: to });
     } else {
       console.log(`Call failed: User ${to} not found.`);
       io.to(socket.id).emit("noRecipient");
     }
   });
+
+  // --- ALL OTHER SOCKET HANDLERS ARE UNCHANGED ---
 
   // Recipient -> send answer back to caller
   socket.on("answerCall", ({ to, answer }) => {
@@ -98,12 +101,11 @@ io.on("connection", (socket) => {
   socket.on("endCall", ({ to }) => {
     const targetSocketId = users.get(to);
     if (targetSocketId) {
-      // Inform the specific user that the call has ended
       io.to(targetSocketId).emit("callEnded");
     }
   });
   
-  // Renegotiation handlers are fine, no changes needed
+  // Renegotiation handlers
   socket.on("renegotiateOffer", ({ to, offer }) => {
       const targetSocketId = users.get(to);
       if (targetSocketId) {
@@ -117,7 +119,6 @@ io.on("connection", (socket) => {
           io.to(targetSocketId).emit("renegotiateAnswer", { from: socket.userId, answer });
       }
   });
-
 });
 
 // Run server
