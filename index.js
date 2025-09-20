@@ -1,4 +1,4 @@
-// server.js
+// server.js (backend)
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -24,12 +24,28 @@ io.on("connection", (socket) => {
   });
 
   socket.on("ice-candidate", ({ to, candidate }) => {
-    io.to(users[to]).emit("ice-candidate", { candidate });
+    if (users[to]) {
+      io.to(users[to]).emit("ice-candidate", { candidate });
+    }
+  });
+
+  socket.on("endCall", (to) => {
+    if (users[to]) {
+      io.to(users[to]).emit("callEnded");
+    }
+  });
+
+  socket.on("rejectCall", (to) => {
+    if (users[to]) {
+      io.to(users[to]).emit("callRejected");
+    }
   });
 
   socket.on("disconnect", () => {
     for (let num in users) {
-      if (users[num] === socket.id) delete users[num];
+      if (users[num] === socket.id) {
+        delete users[num];
+      }
     }
     io.emit("updateUsers", users);
   });
