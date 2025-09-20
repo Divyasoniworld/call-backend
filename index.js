@@ -1,126 +1,63 @@
+// server.js
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const cors = require("cors")
 
 const app = express();
-app.use(cors());
 const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
-const io = new Server(server, {
-  cors: {
-    origin: "*", // allow all (change in production)
-    methods: ["GET", "POST"],
-  },
-});
-
-// Map: userId -> socket.id
-const users = new Map();
+let users = {}; // { number: socketId }
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log("Connected:", socket.id);
 
-  // User registers with a chosen ID (username, number, etc.)
-  socket.on("register", (userId) => {
-    if ([...users.values()].includes(socket.id)) {
-      // If this socket is already registered with a different userId, remove old entry
-      for (let [key, value] of users.entries()) {
-        if (value === socket.id) {
-          users.delete(key);
-        }
-      }
-    }
-    users.set(userId, socket.id);
-    socket.userId = userId; // keep for cleanup
-    console.log(`User registered: ${userId} -> ${socket.id}`);
-    console.log("Current users:", Object.fromEntries(users));
+  socket.on("register", (number) => {
+    users[number] = socket.id;
+    io.emit("users", Object.keys(users)); // send updated list
   });
 
-  // Disconnect cleanup
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-    if (socket.userId) {
-      users.delete(socket.userId);
-      console.log(`User unregistered: ${socket.userId}`);
-      console.log("Current users:", Object.fromEntries(users));
-    }
-    // UPDATED: Removed this line. Broadcasting `callEnded` on disconnect
-    // can terminate unrelated active calls. It's more robust for the
-    // client's `oniceconnectionstatechange` to handle unexpected drops.
-    // socket.broadcast.emit("callEnded"); // <-- REMOVED
-  });
-
-  // Caller -> send offer to recipient
-  socket.on("callUser", ({ to, offer }) => {
-    const targetSocketId = users.get(to);
-    if (targetSocketId) {
-      console.log(`Forwarding call from ${socket.userId} to ${to}`);
-      io.to(targetSocketId).emit("incomingCall", {
-        from: socket.userId,
-        offer,
-      });
+  socket.on("call-user", ({ from, to }) => {
+    if (users[to]) {
+      io.to(users[to]).emit("incoming-call", { from });
     } else {
-      console.log(`Call failed: User ${to} not found.`);
-      io.to(socket.id).emit("noRecipient");
+      io.to(users[from]).emit("user-unavailable", { to });
     }
   });
 
-  // --- ALL OTHER SOCKET HANDLERS ARE UNCHANGED ---
-
-  // Recipient -> send answer back to caller
-  socket.on("answerCall", ({ to, answer }) => {
-    const targetSocketId = users.get(to);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit("callAnswered", {
-        from: socket.userId,
-        answer,
-      });
+  socket.on("call-response", ({ from, to, accepted }) => {
+    if (users[to]) {
+      io.to(users[to]).emit("call-response", { from, accepted });
     }
   });
 
-  // Recipient rejects
-  socket.on("rejectCall", ({ to }) => {
-    const targetSocketId = users.get(to);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit("callRejected", { from: socket.userId });
+  socket.on("offer", ({ to, offer }) => {
+    if (users[to]) {
+      io.to(users[to]).emit("offer", { offer, from: socket.id });
     }
   });
 
-  // ICE candidate exchange
-  socket.on("iceCandidate", ({ to, candidate }) => {
-    const targetSocketId = users.get(to);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit("iceCandidate", {
-        from: socket.userId,
-        candidate,
-      });
+  socket.on("answer", ({ to, answer }) => {
+    if (users[to]) {
+      io.to(users[to]).emit("answer", { answer, from: socket.id });
     }
   });
-  
-  // End call
-  socket.on("endCall", ({ to }) => {
-    const targetSocketId = users.get(to);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit("callEnded");
+
+  socket.on("ice-candidate", ({ to, candidate }) => {
+    if (users[to]) {
+      io.to(users[to]).emit("ice-candidate", { candidate });
     }
   });
-  
-  // Renegotiation handlers
-  socket.on("renegotiateOffer", ({ to, offer }) => {
-      const targetSocketId = users.get(to);
-      if (targetSocketId) {
-          io.to(targetSocketId).emit("renegotiateOffer", { from: socket.userId, offer });
+
+  socket.on("disconnect", () => {
+    for (let number in users) {
+      if (users[number] === socket.id) {
+        delete users[number];
+        break;
       }
-  });
-
-  socket.on("renegotiateAnswer", ({ to, answer }) => {
-      const targetSocketId = users.get(to);
-      if (targetSocketId) {
-          io.to(targetSocketId).emit("renegotiateAnswer", { from: socket.userId, answer });
-      }
+    }
+    io.emit("users", Object.keys(users));
   });
 });
 
-// Run server
-const PORT = 4000;
-server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+server.listen(5000, () => console.log("Server running on :5000"));
