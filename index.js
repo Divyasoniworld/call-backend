@@ -1,4 +1,3 @@
-// server.js
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -14,7 +13,8 @@ io.on("connection", (socket) => {
 
   socket.on("register", (number) => {
     users[number] = socket.id;
-    io.emit("users", Object.keys(users)); // send updated list
+    socket.number = number;
+    io.emit("users", Object.keys(users));
   });
 
   socket.on("call-user", ({ from, to }) => {
@@ -32,31 +32,22 @@ io.on("connection", (socket) => {
   });
 
   socket.on("offer", ({ to, offer }) => {
-    if (users[to]) {
-      io.to(users[to]).emit("offer", { offer, from: socket.id });
-    }
+    if (users[to]) io.to(users[to]).emit("offer", { offer, from: socket.number });
   });
 
   socket.on("answer", ({ to, answer }) => {
-    if (users[to]) {
-      io.to(users[to]).emit("answer", { answer, from: socket.id });
-    }
+    if (users[to]) io.to(users[to]).emit("answer", { answer, from: socket.number });
   });
 
   socket.on("ice-candidate", ({ to, candidate }) => {
-    if (users[to]) {
-      io.to(users[to]).emit("ice-candidate", { candidate });
-    }
+    if (users[to]) io.to(users[to]).emit("ice-candidate", { candidate });
   });
 
   socket.on("disconnect", () => {
-    for (let number in users) {
-      if (users[number] === socket.id) {
-        delete users[number];
-        break;
-      }
+    if (socket.number) {
+      delete users[socket.number];
+      io.emit("users", Object.keys(users));
     }
-    io.emit("users", Object.keys(users));
   });
 });
 
